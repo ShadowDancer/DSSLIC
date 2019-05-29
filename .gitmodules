@@ -1,0 +1,4 @@
+[submodule "PSPNet-Pytorch"]
+	path = PSPNet-Pytorch
+	url = https://github.com/shahabty/PSPNet-Pytorch
+	branch = master
