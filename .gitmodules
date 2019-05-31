@@ -2,3 +2,6 @@
 	path = PSPNet-Pytorch
 	url = https://github.com/shahabty/PSPNet-Pytorch
 	branch = master
+[submodule "DSSLIC_orig"]
+	path = DSSLIC_orig
+	url = https://github.com/makbari7/DSSLIC.git
