@@ -1,0 +1,12 @@
+name: DSSLIC
+channels:
+- anaconda
+- conda-forge
+dependencies:
+- python=3.6.8
+- numpy
+- tensorflow=1.13
+- pyyaml
+- pillow
+- pip
+- jupyter

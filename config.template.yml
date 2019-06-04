@@ -1,0 +1,29 @@
+dataset:
+    name: 'ADE20K'  # ADE20K
+    ADE20K:
+        path: 'FILL_ME/ADE20K_2016_07_26/images/training' # \images\training directory
+        img_shape: [256, 256, 3]   # scale dataset image to this shape
+        segmentation_channels: 151 # number of channels in which one hot segmentations will be encoded
+
+train:
+    lr: 0.0001              # adam learning rate
+    batch_size: 8           # size of the batches
+    steps: 200000           # iterations to train on
+    summary_iter: 100       # iterations between save summary
+    checkpoint_iter: 20000  # iterations between model checkpoints
+    checkpoint_keep_max: 5  # of checkpoints to keep
+
+nn:
+    common: # common
+        norm: 'instance'
+    completion: # completion network
+        channels: 64
+        downsample: 3 # how many times downsample image
+    fine: # fine network
+        channels: 64
+        downsample: 3
+        resnet_blocks: 9
+    discriminator:
+        n_discriminators: 2 # number of discriminators to use, each scales down by half
+        channels: 64
+        layers: 3 # number of layers in discriminator, each has twice filters
