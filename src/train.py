@@ -16,7 +16,11 @@ def run_main_gan(args, config):
     batch_size = config.train.batch_size
 
     def input_fn():
-        return load_dataset(config).batch(batch_size)  # dataset load ops must be called inside input_fn
+        """
+            Function called by estimator to load data
+            Dataset object must be created inside this funciton to initialize session correctly
+        """
+        return load_dataset(config).repeat().shuffle(buffer_size=batch_size*25).batch(batch_size)
 
     import tensorflow as tf
     run_config = tf.estimator.RunConfig().replace(

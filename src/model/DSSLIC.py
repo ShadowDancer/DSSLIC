@@ -4,8 +4,8 @@ from tensorflow.estimator import ModeKeys
 from model.networks import configure_completion_net, configure_fine_net, configure_multiscale_discriminator
 
 
-def image_tensor_to_rgb(image):
-    return (image + 1) * (255/2)
+def image_tensor_to_rgb(image, add=1, scale=2):
+    return (image + add) * (255 // scale)
     pass
 
 
@@ -20,17 +20,15 @@ def _model_fn(features, labels, mode: ModeKeys, params):
     """
     predictions, loss, train_op, train_hooks = None, None, None, []
 
-    input_image, segmentation = features["image"], features["segmentation"]
-    original_segmentation = segmentation
+    input_image, segmentation_rgb = features["image"], features["segmentation"]
+    segmentation_one_hot = features["segmentation_one_hot"]
+
+
     config = params
 
-    # TODO: segmentation = one_hot_encode(segmentation)
-
-    use_segmentation = False
-
     with tf.variable_scope("generator"):
-        if use_segmentation:
-            completion_in = tf.concat([input_image, segmentation], 3)
+        if config.segmentation.add_for_completion:
+            completion_in = tf.concat([input_image, segmentation_one_hot], 3)
         else:
             completion_in = input_image
         coarse = configure_completion_net(completion_in, config)
@@ -38,8 +36,8 @@ def _model_fn(features, labels, mode: ModeKeys, params):
         image_shape = tf.shape(input_image)
         image_shape = [image_shape[1], image_shape[2]]
         coarse_upsampled = tf.image.resize_images(coarse, image_shape, method=tf.image.ResizeMethod.BILINEAR)
-        if use_segmentation:
-            fine_in = tf.concat([coarse_upsampled, segmentation], 3)
+        if config.segmentation.add_for_fine:
+            fine_in = tf.concat([coarse_upsampled, segmentation_one_hot], 3)
         else:
             fine_in = coarse_upsampled
         residual = configure_fine_net(fine_in, config)
@@ -52,8 +50,10 @@ def _model_fn(features, labels, mode: ModeKeys, params):
     with tf.variable_scope("discriminator", reuse=tf.AUTO_REUSE):
         fake_discriminator_in = tf.concat([completion_in, reconstruction_image], axis=3)
         real_discriminator_in = tf.concat([completion_in, input_image], axis=3)
-        fake_discriminator_result, fake_discriminator_features = configure_multiscale_discriminator(fake_discriminator_in, config)
-        real_discriminator_result, real_discriminator_features = configure_multiscale_discriminator(real_discriminator_in, config)
+        fake_discriminator_result, fake_discriminator_features = configure_multiscale_discriminator(
+            fake_discriminator_in, config)
+        real_discriminator_result, real_discriminator_features = configure_multiscale_discriminator(
+            real_discriminator_in, config)
 
     with tf.variable_scope("losses"):
         loss_d_adv_fake = gan_loss(fake_discriminator_result, False)
@@ -62,7 +62,6 @@ def _model_fn(features, labels, mode: ModeKeys, params):
         loss_g_adv = -gan_loss(fake_discriminator_result, False)
 
         mssim_loss = 0
-
 
         loss_l1 = tf.reduce_mean(tf.abs(input_image - reconstruction_image))
 
@@ -73,7 +72,7 @@ def _model_fn(features, labels, mode: ModeKeys, params):
         loss_vgg_feature_matching = 0
 
         # TODO: Print losses
-    
+
         loss_d = (loss_d_adv_real + loss_d_adv_fake) * 0.5
         loss_g = loss_g_adv + loss_gan_feature_matching * 10 + loss_vgg_feature_matching * 10 + mssim_loss + loss_l1 * 20
         loss_g = loss_l1 * 20
@@ -89,12 +88,19 @@ def _model_fn(features, labels, mode: ModeKeys, params):
     def mse(x, y):
         b = x - y
         return tf.reduce_mean(b * b)
+
     tf.summary.scalar('generator/loss_l2', mse(input_image, reconstruction_image))
     tf.summary.scalar('generator/loss_l2_coarse', mse(input_image, coarse_upsampled))
 
     t = image_tensor_to_rgb
-    image_summary = tf.concat([t(input_image), original_segmentation, t(coarse_upsampled), t(residual), t(reconstruction_image)], 2)
-    tf.summary.image('reconstruction ( input, segmentation. croase, residual, reconstructed image)', image_summary)
+
+    for ins in range(0, 34, 5):
+        sseg = tf.expand_dims(tf.concat(tf.unstack(segmentation_one_hot[:, :, :, ins:ins + 5], axis=3), 2), -1)
+
+        tf.summary.image('segmentation_' + str(ins), t(sseg, 0, 1))
+    image_summary = tf.concat([t(input_image), tf.cast(segmentation_rgb, tf.float32), t(coarse_upsampled), t(residual),
+                               t(reconstruction_image)], 2)
+    tf.summary.image('reconstruction input, segmentation. croase, residual, reconstructed image', image_summary)
     tf.summary.image('coarse', t(coarse))
 
     # TODO: decaying learning rate
@@ -107,7 +113,7 @@ def _model_fn(features, labels, mode: ModeKeys, params):
     minimize_g = optimizer_g.minimize(loss_g, var_list=generator_vars, global_step=tf.train.get_global_step())
 
     if mode == ModeKeys.EVAL or mode == ModeKeys.TRAIN:
-        #train_op = tf.group(minimize_d, minimize_g)
+        # train_op = tf.group(minimize_d, minimize_g)
         train_op = minimize_g
         loss = loss_g + loss_d
 

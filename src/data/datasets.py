@@ -32,15 +32,12 @@ def _load_image(img_path, scale_shape):
     image = (image / (255 / 2)) - 1  # normalize image image
     return image
 
+
 def _load_segmentation(img_path, scale_shape):
     """ Loads and decodes image """
-    image = tf.image.decode_png(tf.read_file(img_path))
+    image = tf.image.decode_png(tf.read_file(img_path), channels=scale_shape[2])
     image = tf.image.resize_images(image, [scale_shape[0], scale_shape[1]], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
-    image.set_shape(scale_shape)  # 3 channels
- #   image = tf.image.rgb_to_grayscale(image)
-    image = tf.cast(image, tf.float32)
-
-
+    image.set_shape(scale_shape)
     return image
 
 
@@ -57,18 +54,42 @@ def _load_ade20k(dataset_cfg):
         file, ext = os.path.splitext(orig_path)
         file = file + '_seg'
         fake_path = path.join(dir, file + '.png')
-        return fake_path
+        file = file + '_one_hot'
+        fake_path2 = path.join(dir, file + '.png')
+        return fake_path, fake_path2
 
     segmentation_files = (orig_to_fake_path(o) for o in image_files)
-    data = [(orig, fake) for orig, fake in zip(image_files, segmentation_files) if
+    data = [(orig, fake, fake2) for orig, (fake, fake2) in zip(image_files, segmentation_files) if
             os.path.isfile(fake) and Image.open(orig).mode == 'RGB']
     path_ds = tf.data.Dataset.from_tensor_slices(data)  # (image_path, segmentation_path)
 
     def map_to_images(paths):
         image = _load_image(paths[0], dataset_cfg.img_shape)
+        # load rgb segmentation for display purposes?
         segmentation = _load_segmentation(paths[1], dataset_cfg.img_shape)
+        # load processed grayscale image, where each pixel is class id (1, 2, 3) etc.
+        label_s = list(dataset_cfg.img_shape)
+        label_s[2] = 1
+        segmentation_labels = _load_segmentation(paths[2], label_s)
 
-        return {'image': image, 'segmentation': segmentation}, 0
+        def segmentation_to_one_hot(labels, classes):
+            """
+            :param labels: Tensor with encoded labels
+            :param classes: Number of output features
+            :return: Tensor (256x256
+            """
+            result = []
+            for i in range(classes):
+                r = tf.cast(tf.equal(labels, i + 1), tf.float32)  # class numbers star from 1
+                result.append(r[:, :, 0])
+            result = tf.stack(result, axis=2)
+
+            result.set_shape((labels.shape[0], labels.shape[1], classes))
+            result = tf.cast(result, tf.float32)
+            return result
+
+        segmentation_one_hot = segmentation_to_one_hot(segmentation_labels, dataset_cfg.segmentation_channels)
+        return {'image': image, 'segmentation': segmentation, 'segmentation_one_hot': segmentation_one_hot}, 0
 
     image_ds = path_ds.map(map_to_images)
     image_ds = image_ds.apply(tf.data.experimental.ignore_errors())

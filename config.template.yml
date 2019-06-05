@@ -8,10 +8,14 @@ dataset:
 train:
     lr: 0.0001              # adam learning rate
     batch_size: 8           # size of the batches
-    steps: 200000           # iterations to train on
+    steps: 50000           # iterations to train on
     summary_iter: 100       # iterations between save summary
     checkpoint_iter: 20000  # iterations between model checkpoints
     checkpoint_keep_max: 5  # of checkpoints to keep
+
+segmentation:
+    add_for_fine: True       # concat segmentation to input of fine network
+    add_for_completion: True # concat segmentation to input of completion network
 
 nn:
     common: # common
