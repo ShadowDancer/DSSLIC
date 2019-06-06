@@ -1,12 +1,9 @@
 import tensorflow as tf
 from tensorflow.estimator import ModeKeys
 
+from model.losses import ssim_loss, l1_loss, l2_loss, gan_loss, gan_feature_matching
 from model.networks import configure_completion_net, configure_fine_net, configure_multiscale_discriminator
-
-
-def image_tensor_to_rgb(image, add=1, scale=2):
-    return (image + add) * (255 // scale)
-    pass
+from model.utils import activation_to_image
 
 
 def _model_fn(features, labels, mode: ModeKeys, params):
@@ -20,9 +17,11 @@ def _model_fn(features, labels, mode: ModeKeys, params):
     """
     predictions, loss, train_op, train_hooks = None, None, None, []
 
-    input_image, segmentation_rgb = features["image"], features["segmentation"]
-    segmentation_one_hot = features["segmentation_one_hot"]
-
+    input_image_file = features["image_file"]
+    input_image = features["image"]  # batch of rgb input images in [-1, 1]
+    segmentation_rgb = features["segmentation"]  # z
+    # batch of rgb segmentation in range [0, 255]
+    segmentation_one_hot = features["segmentation_one_hot"]  # batch of segmentation one-hot encoded
 
     config = params
 
@@ -41,67 +40,74 @@ def _model_fn(features, labels, mode: ModeKeys, params):
         else:
             fine_in = coarse_upsampled
         residual = configure_fine_net(fine_in, config)
+
     reconstruction_image = coarse_upsampled + residual
+    if config.nn.common.clip_reconstruction:
+        reconstruction_image = tf.clip_by_value(reconstruction_image, -1, 1)
+    if config.nn.common.use_residual_as_reconstruction:
+        reconstruction_image = residual
 
-    def gan_loss(discriminator_output, is_real):
-        sign = -1 if is_real else 1
-        return sign * tf.reduce_mean(discriminator_output)
-
-    with tf.variable_scope("discriminator", reuse=tf.AUTO_REUSE):
+    with tf.variable_scope("discriminator", reuse=False):
         fake_discriminator_in = tf.concat([completion_in, reconstruction_image], axis=3)
         real_discriminator_in = tf.concat([completion_in, input_image], axis=3)
         fake_discriminator_result, fake_discriminator_features = configure_multiscale_discriminator(
             fake_discriminator_in, config)
+    with tf.variable_scope("discriminator", reuse=True):
         real_discriminator_result, real_discriminator_features = configure_multiscale_discriminator(
             real_discriminator_in, config)
 
-    with tf.variable_scope("losses"):
+    with tf.variable_scope("g_loss"):
+        g_loss = []
+        loss_cfg = config.train.loss
+
+        loss_g_adv = gan_loss(fake_discriminator_result, is_real=True)  # generator wants make fakes like real
+
+        d_feat_loss = gan_feature_matching(real_discriminator_features, fake_discriminator_features)
+
+        vgg_feat_loss = 0
+        if loss_cfg.reconstruction.vgg_feature_matching != 0:
+            from model.losses import vgg_feature_matching
+            vgg_feat_loss = vgg_feature_matching(input_image, reconstruction_image)
+
+        ssim = ssim_loss(input_image + 1, reconstruction_image + 1, 2)
+        ssim_coarse = ssim_loss(input_image + 1, coarse_upsampled + 1, 2)
+
+        p = "reconstruction/"
+        g_loss.append([p + "ssim", ssim, loss_cfg.reconstruction.ssim])
+        g_loss.append([p + "l1", l1_loss(input_image, reconstruction_image), loss_cfg.reconstruction.l1])
+        g_loss.append([p + "l2", l2_loss(input_image, reconstruction_image), loss_cfg.reconstruction.l2])
+
+        g_loss.append([p + "adversarial", loss_g_adv, loss_cfg.reconstruction.g_adv])
+        g_loss.append([p + "discriminator_feature_matching", d_feat_loss, loss_cfg.reconstruction.d_feature_matching])
+        g_loss.append([p + "vgg_feature_matching", vgg_feat_loss, loss_cfg.reconstruction.vgg_feature_matching])
+
+        p = "coarse/"
+        g_loss.append([p + "ssim", ssim_coarse, loss_cfg.coarse.ssim])
+        g_loss.append([p + "l1", l1_loss(input_image, coarse_upsampled), loss_cfg.coarse.l1])
+        g_loss.append([p + "l2", l2_loss(input_image, coarse_upsampled), loss_cfg.coarse.l2])
+
+        loss_g = sum(l[1] * l[2] for l in g_loss)
+        tf.summary.scalar('loss/reconstruction', loss_g)
+
+        for name, loss, factor in g_loss:
+            if factor != 0:
+                tf.summary.scalar(name, loss * factor)
+
+        # discriminator adversarial losses
         loss_d_adv_fake = gan_loss(fake_discriminator_result, False)
         loss_d_adv_real = gan_loss(real_discriminator_result, True)
-
-        loss_g_adv = -gan_loss(fake_discriminator_result, False)
-
-        mssim_loss = 0
-
-        loss_l1 = tf.reduce_mean(tf.abs(input_image - reconstruction_image))
-
-        # TODO: feature matching loss
-        loss_gan_feature_matching = 0
-
-        # TODO: VGG feature matching loss
-        loss_vgg_feature_matching = 0
-
-        # TODO: Print losses
-
         loss_d = (loss_d_adv_real + loss_d_adv_fake) * 0.5
-        loss_g = loss_g_adv + loss_gan_feature_matching * 10 + loss_vgg_feature_matching * 10 + mssim_loss + loss_l1 * 20
-        loss_g = loss_l1 * 20
 
-    tf.summary.scalar('loss/generator', loss_g)
+    tf.summary.scalar("discriminator/real", loss_d_adv_real)
+    tf.summary.scalar("discriminator/fake", loss_d_adv_fake)
     tf.summary.scalar('loss/discriminator', loss_d)
-
-    tf.summary.scalar('discriminator/loss_real', loss_d_adv_real)
-    tf.summary.scalar('discriminator/loss_reconstruction', loss_d_adv_fake)
-    tf.summary.scalar('generator/loss_adversarial', loss_g_adv)
-    tf.summary.scalar('generator/loss_l1', loss_l1 * 20)
-
-    def mse(x, y):
-        b = x - y
-        return tf.reduce_mean(b * b)
-
-    tf.summary.scalar('generator/loss_l2', mse(input_image, reconstruction_image))
-    tf.summary.scalar('generator/loss_l2_coarse', mse(input_image, coarse_upsampled))
-
-    t = image_tensor_to_rgb
-
-    for ins in range(0, 34, 5):
-        sseg = tf.expand_dims(tf.concat(tf.unstack(segmentation_one_hot[:, :, :, ins:ins + 5], axis=3), 2), -1)
-
-        tf.summary.image('segmentation_' + str(ins), t(sseg, 0, 1))
-    image_summary = tf.concat([t(input_image), tf.cast(segmentation_rgb, tf.float32), t(coarse_upsampled), t(residual),
-                               t(reconstruction_image)], 2)
+    # summary images
+    t = activation_to_image
+    seg = tf.cast(segmentation_rgb, tf.float32)
+    image_summary = tf.concat([t(input_image), seg, t(coarse_upsampled), t(residual), t(reconstruction_image)], 2)
+    image_summary = tf.cast(image_summary, tf.uint8)  # cast to uint8 to avoid scaling
     tf.summary.image('reconstruction input, segmentation. croase, residual, reconstructed image', image_summary)
-    tf.summary.image('coarse', t(coarse))
+    tf.summary.image('coarse', tf.cast(t(coarse), tf.uint8))
 
     # TODO: decaying learning rate
     generator_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='generator')
@@ -109,12 +115,16 @@ def _model_fn(features, labels, mode: ModeKeys, params):
 
     optimizer_d = tf.train.AdamOptimizer(learning_rate=config.train.lr)
     optimizer_g = tf.train.AdamOptimizer(learning_rate=config.train.lr)
-    minimize_d = optimizer_d.minimize(loss_d, var_list=discriminator_vars)
+
     minimize_g = optimizer_g.minimize(loss_g, var_list=generator_vars, global_step=tf.train.get_global_step())
+    if loss_cfg.reconstruction.g_adv != 0:
+        minimize_d = optimizer_d.minimize(loss_d, var_list=discriminator_vars)
+        train_op = tf.group(minimize_d, minimize_g)
+    else:
+        train_op = tf.group(minimize_g)
 
     if mode == ModeKeys.EVAL or mode == ModeKeys.TRAIN:
-        # train_op = tf.group(minimize_d, minimize_g)
-        train_op = minimize_g
+        train_op = train_op
         loss = loss_g + loss_d
 
     if mode == ModeKeys.PREDICT:
@@ -131,7 +141,8 @@ def _model_fn(features, labels, mode: ModeKeys, params):
 
 
 class DSSLICModel(tf.estimator.Estimator):
-    def __init__(self, model_dir=None, config=None, params=None):
-        super(DSSLICModel, self).__init__(model_fn=_model_fn, model_dir=model_dir, config=config, params=params)
+    def __init__(self, model_dir=None, config=None, params=None, warm_start_from=None):
+        super(DSSLICModel, self).__init__(model_fn=_model_fn, model_dir=model_dir, config=config, params=params,
+                                          warm_start_from=warm_start_from)
 
     pass

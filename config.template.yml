@@ -1,4 +1,5 @@
 dataset:
+    shuffle_seed: 1337
     name: 'ADE20K'  # ADE20K
     ADE20K:
         path: 'FILL_ME/ADE20K_2016_07_26/images/training' # \images\training directory
@@ -6,12 +7,26 @@ dataset:
         segmentation_channels: 151 # number of channels in which one hot segmentations will be encoded
 
 train:
-    lr: 0.0001              # adam learning rate
+    lr: 0.0002              # adam learning rate
     batch_size: 8           # size of the batches
     steps: 50000           # iterations to train on
     summary_iter: 100       # iterations between save summary
-    checkpoint_iter: 20000  # iterations between model checkpoints
+    checkpoint_iter: 10000  # iterations between model checkpoints
     checkpoint_keep_max: 5  # of checkpoints to keep
+    shuffle: True           # shuffle dataset for training
+
+    loss:
+        reconstruction:         # losses applied to reconstruction (final) image
+            l1: 20                  # absolute distance
+            l2: 0                   # mean squared error
+            ssim: 1                 # structural similarity index
+            g_adv: 0                # generator adversarial loss
+            d_feature_matching: 0   # matching features of discriminator
+            vgg_feature_matching: 0 # matching features of vgg
+        coarse:                 # losses applied to upsampled coarse image
+            l1: 0
+            l2: 0
+            ssim: 0
 
 segmentation:
     add_for_fine: True       # concat segmentation to input of fine network
@@ -20,6 +35,11 @@ segmentation:
 nn:
     common: # common
         norm: 'instance'
+        clip_reconstruction: False # clip
+        # instead of adding residual (from fine net) to upsampled (from completion), use residual as reconstruction
+        # upsampled
+        use_residual_as_reconstruction: False
+
     completion: # completion network
         channels: 64
         downsample: 3 # how many times downsample image

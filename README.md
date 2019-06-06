@@ -15,7 +15,7 @@ conda activate DSSLIC
 ```
 
 
-- download & unpack ADE20K
+- download & unpack ADE20K and run src/data/ade20k_utils (set path to dataset inside), to preprocess segmentations 
 - copy config.template.yml to config.yml
 - set dataset path in config file
 - run scripts from src directory (PYCHARM: right click src and "Mark directory as / Sources root")
