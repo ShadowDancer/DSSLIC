@@ -106,3 +106,4 @@ venv.bak/
 /checkpoints/
 /config.yml
 /configs/
+/results*/

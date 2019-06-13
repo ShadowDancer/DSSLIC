@@ -113,12 +113,15 @@ def _model_fn(features, labels, mode: ModeKeys, params):
     generator_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='generator')
     discriminator_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='discriminator')
 
-    optimizer_d = tf.train.AdamOptimizer(learning_rate=config.train.lr)
-    optimizer_g = tf.train.AdamOptimizer(learning_rate=config.train.lr)
-
-    minimize_g = optimizer_g.minimize(loss_g, var_list=generator_vars, global_step=tf.train.get_global_step())
-    if loss_cfg.reconstruction.g_adv != 0:
+    with tf.variable_scope("discriminator"):
+        optimizer_d = tf.train.AdamOptimizer(learning_rate=config.train.lr)
         minimize_d = optimizer_d.minimize(loss_d, var_list=discriminator_vars)
+
+    with tf.variable_scope("generator"):
+        optimizer_g = tf.train.AdamOptimizer(learning_rate=config.train.lr)
+        minimize_g = optimizer_g.minimize(loss_g, var_list=generator_vars, global_step=tf.train.get_global_step())
+
+    if loss_cfg.reconstruction.g_adv != 0:
         train_op = tf.group(minimize_d, minimize_g)
     else:
         train_op = tf.group(minimize_g)
@@ -128,10 +131,14 @@ def _model_fn(features, labels, mode: ModeKeys, params):
         loss = loss_g + loss_d
 
     if mode == ModeKeys.PREDICT:
-        # predictions = TODO
-        pass
+        predictions = {"input_image": input_image,
+                       "segmentation": segmentation_labels,
+                       "coarse_image": coarse,
+                       "residual_image": residual,
+                       "reconstruction_image": reconstruction_image,
+                       "input_file": input_image_file}
 
-    return tf.estimator.EstimatorSpec(  # Retrun an Estimatorspec
+    return tf.estimator.EstimatorSpec(  # Retrun an EstimatorSpec
         mode=mode,  # The mode tell's the spec which ops to use
         predictions=predictions,  # The predictions (only called if mode==PREDICT)
         loss=loss,  # Only used if mode!=PREDICT
