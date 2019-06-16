@@ -15,7 +15,6 @@ def var_scope(name):
     """Wraps function call in variable scope"""
     def decorator(func):
         def wrapper(*args, **kwargs):
-            stem = kwargs.get('stem', False)
             scope = kwargs.get('scope', name)
             reuse = kwargs.get('reuse', None)
             with tf.variable_scope(scope, reuse=reuse):
@@ -23,3 +22,9 @@ def var_scope(name):
         return wrapper
     return decorator
 
+
+def gradient_summary(grads_and_vars):
+    for g, v in grads_and_vars:
+        name: str = v.name.replace(":", "_")
+        tf.summary.histogram(name, v)
+        tf.summary.histogram(name + '_grad', g)

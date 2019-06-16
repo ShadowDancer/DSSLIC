@@ -3,7 +3,7 @@ from tensorflow.estimator import ModeKeys
 
 from model.losses import ssim_loss, l1_loss, l2_loss, gan_loss, gan_feature_matching
 from model.networks import configure_completion_net, configure_fine_net, configure_multiscale_discriminator
-from model.utils import activation_to_image
+from model.utils import activation_to_image, gradient_summary
 
 
 def _model_fn(features, labels, mode: ModeKeys, params):
@@ -101,13 +101,18 @@ def _model_fn(features, labels, mode: ModeKeys, params):
     tf.summary.scalar("discriminator/real", loss_d_adv_real)
     tf.summary.scalar("discriminator/fake", loss_d_adv_fake)
     tf.summary.scalar('loss/discriminator', loss_d)
+
     # summary images
     t = activation_to_image
     seg = tf.cast(segmentation_rgb, tf.float32)
     image_summary = tf.concat([t(input_image), seg, t(coarse_upsampled), t(residual), t(reconstruction_image)], 2)
     image_summary = tf.cast(image_summary, tf.uint8)  # cast to uint8 to avoid scaling
-    tf.summary.image('reconstruction input, segmentation. croase, residual, reconstructed image', image_summary)
+
+    tf.summary.text("input_image", input_image_file)
+    tf.summary.image('input', tf.cast(t(input_image), tf.uint8))
     tf.summary.image('coarse', tf.cast(t(coarse), tf.uint8))
+    tf.summary.image('reconstruction', tf.cast(t(reconstruction_image), tf.uint8))
+    tf.summary.image('comparison_input_segmentation_coarse_residual_reconstruction', image_summary)
 
     # TODO: decaying learning rate
     generator_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='generator')
@@ -115,11 +120,15 @@ def _model_fn(features, labels, mode: ModeKeys, params):
 
     with tf.variable_scope("discriminator"):
         optimizer_d = tf.train.AdamOptimizer(learning_rate=config.train.lr)
-        minimize_d = optimizer_d.minimize(loss_d, var_list=discriminator_vars)
+        grads_and_vars_d = optimizer_d.compute_gradients(loss_d, var_list=discriminator_vars)
+        gradient_summary(grads_and_vars_d)
+        minimize_d = optimizer_d.apply_gradients(grads_and_vars_d)
 
     with tf.variable_scope("generator"):
         optimizer_g = tf.train.AdamOptimizer(learning_rate=config.train.lr)
-        minimize_g = optimizer_g.minimize(loss_g, var_list=generator_vars, global_step=tf.train.get_global_step())
+        grads_and_vars_g = optimizer_g.compute_gradients(loss_g, var_list=generator_vars)
+        gradient_summary(grads_and_vars_g)
+        minimize_g = optimizer_g.apply_gradients(grads_and_vars_g, global_step=tf.train.get_global_step())
 
     if loss_cfg.reconstruction.g_adv != 0:
         train_op = tf.group(minimize_d, minimize_g)
@@ -132,7 +141,7 @@ def _model_fn(features, labels, mode: ModeKeys, params):
 
     if mode == ModeKeys.PREDICT:
         predictions = {"input_image": input_image,
-                       "segmentation": segmentation_labels,
+                       "segmentation": segmentation_rgb,
                        "coarse_image": coarse,
                        "residual_image": residual,
                        "reconstruction_image": reconstruction_image,

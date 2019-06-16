@@ -38,9 +38,9 @@ def _load_segmentation(img_path):
     return image
 
 
-def _resize_image(image, scale_shape, method:tf.image.ResizeMethod= tf.image.ResizeMethod.BICUBIC):
+def _resize_image(image, scale_shape, method: tf.image.ResizeMethod = tf.image.ResizeMethod.BICUBIC):
     image = tf.image.resize_images(image, [scale_shape[0], scale_shape[1]],
-                                   method=method)
+                                   method=method, align_corners=True)
     image.set_shape(scale_shape)
     return image
 
@@ -87,7 +87,6 @@ def _load_ade20k(dataset_cfg, batch_size, epochs, shuffle, shuffle_seed):
     def filter_images(data):
         image_s = tf.shape(data['image'])
         r = image_s.shape[0] >= 512 and image_s.shape[1] >= 512
-        print(r, image_s, image_s.shape[0] >= 512)
         return r
 
     def map_to_images(data):
@@ -130,9 +129,9 @@ def _load_ade20k(dataset_cfg, batch_size, epochs, shuffle, shuffle_seed):
         path_ds = path_ds.shuffle(30000, seed=shuffle_seed)
     path_ds = path_ds.repeat(epochs)
 
-    image_ds = path_ds.map(load_images)
+    image_ds = path_ds.map(load_images, num_parallel_calls=10)
     image_ds.filter(filter_images)
-    image_ds = image_ds.map(map_to_images)
+    image_ds = image_ds.map(map_to_images, num_parallel_calls=10)
     image_ds = image_ds.apply(tf.data.experimental.ignore_errors())
     if batch_size is not None:
         image_ds = image_ds.batch(batch_size)

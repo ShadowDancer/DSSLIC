@@ -66,7 +66,6 @@ def predict(args):
         coarse_image = convert_image(coarse_np)
         coarse_image.save(path.join(out_dir, base_file_name + '_coarse.bmp'), "BMP")
 
-        print('segmentation_labels_np', segmentation_labels_np.shape)
         segmentation = Image.fromarray(np.squeeze(segmentation_labels_np), "L")
         segmentation.save(path.join(out_dir, base_file_name + '_segmentation.bmp'), "BMP")
 

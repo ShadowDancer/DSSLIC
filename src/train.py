@@ -56,7 +56,7 @@ def make_model(model_dir, restore_path, config):
 
     if restore_path is not None:
         ws = tf.estimator.WarmStartSettings(ckpt_to_initialize_from=restore_path,
-                                            vars_to_warm_start=['generator', 'discriminator', 'global_step', 'beta'])
+                                            vars_to_warm_start=['generator', 'discriminator', 'global_step'])
     else:
         ws = None
     model = DSSLICModel(model_dir=model_dir, params=config, config=run_config, warm_start_from=ws)
